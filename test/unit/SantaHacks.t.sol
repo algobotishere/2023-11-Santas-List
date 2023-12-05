@@ -93,4 +93,21 @@ contract SantasListTest is Test {
     assertEq(santasList.balanceOf(grinch), 69);
     vm.stopPrank();
   }
+
+  //MEV bots can DDOS external checkList() function to prevent any user to claim presents
+  function test_MEVgriefing() public {
+    vm.startPrank(santa);
+    santasList.checkList(user, SantasList.Status.EXTRA_NICE);
+    santasList.checkTwice(user, SantasList.Status.EXTRA_NICE);
+    vm.stopPrank();
+
+    //Naughty Grinch's MEV bot sends transaction immediately after Santa
+    vm.startPrank(grinch);
+    santasList.checkList(user, SantasList.Status.NAUGHTY);
+    vm.stopPrank();
+
+    vm.startPrank(user);
+    vm.expectRevert(); //user fails to claim presents
+    santasList.collectPresent();
+  }
 }
