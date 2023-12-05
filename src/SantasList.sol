@@ -170,7 +170,7 @@ contract SantasList is ERC721, TokenUri {
      * @dev You'll first need to approve the SantasList contract to spend your SantaTokens.
      */
     function buyPresent(address presentReceiver) external {
-        i_santaToken.burn(presentReceiver);
+        i_santaToken.burn(presentReceiver) ;
         _mintAndIncrement();
     }
 
