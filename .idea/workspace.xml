@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="6c0b1ace-97eb-4513-b406-c43524bda5df" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/script/Counter.s.sol" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/Counter.sol" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/SantasList.sol" beforeDir="false" afterPath="$PROJECT_DIR$/src/SantasList.sol" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/Counter.t.sol" beforeDir="false" />
-    </list>
+    <list default="true" id="6c0b1ace-97eb-4513-b406-c43524bda5df" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -44,6 +39,7 @@
       <updated>1701601726578</updated>
       <workItem from="1701601728194" duration="726000" />
       <workItem from="1701602458891" duration="3644000" />
+      <workItem from="1701790928976" duration="298000" />
     </task>
     <servers />
   </component>
