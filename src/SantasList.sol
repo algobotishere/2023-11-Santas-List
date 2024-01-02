@@ -44,7 +44,7 @@
 //                 |'= -x       L___   '--,
 //                 L   __\          '-----'
 //                  '.____)
-pragma solidity 0.8.22;
+pragma solidity 0.8.23;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {TokenUri} from "./TokenUri.sol";
@@ -76,8 +76,8 @@ contract SantasList is ERC721, TokenUri {
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
-    mapping(address person => Status naughtyOrNice) private s_theListCheckedOnce;
-    mapping(address person => Status naughtyOrNice) private s_theListCheckedTwice;
+    mapping(address person => Status naughtyOrNice) public  s_theListCheckedOnce;
+    mapping(address person => Status naughtyOrNice) public s_theListCheckedTwice;
     address private immutable i_santa;
     uint256 private s_tokenCounter;
     SantaToken private immutable i_santaToken;
@@ -118,7 +118,7 @@ contract SantasList is ERC721, TokenUri {
      * @param person The person to check
      * @param status The status of the person
      */
-    function checkList(address person, Status status) external {
+    function checkList(address person, Status status) public {
         s_theListCheckedOnce[person] = status;
         emit CheckedOnce(person, status);
     }
@@ -144,7 +144,7 @@ contract SantasList is ERC721, TokenUri {
      *  - Extra Nice: Collect an NFT and a SantaToken
      * This should not be callable until Christmas 2023 (give or take 24 hours), and addresses should not be able to collect more than once.
      */
-    function collectPresent() external {
+    function collectPresent() public {
         if (block.timestamp < CHRISTMAS_2023_BLOCK_TIME) {
             revert SantasList__NotChristmasYet();
         }
@@ -192,7 +192,7 @@ contract SantasList is ERC721, TokenUri {
         return address(i_santaToken);
     }
 
-    function getNaughtyOrNiceOnce(address person) external view returns (Status) {
+    function getNaughtyOrNiceOnce(address person) public view returns (Status) {
         return s_theListCheckedOnce[person];
     }
 

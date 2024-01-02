@@ -1,0 +1,1023 @@
+Repository Documentation
+This document provides a comprehensive overview of the repository's structure and contents.
+The first section, titled 'Directory/File Tree', displays the repository's hierarchy in a tree format.
+In this section, directories and files are listed using tree branches to indicate their structure and relationships.
+Following the tree representation, the 'File Content' section details the contents of each file in the repository.
+Each file's content is introduced with a '[File Begins]' marker followed by the file's relative path,
+and the content is displayed verbatim. The end of each file's content is marked with a '[File Ends]' marker.
+This format ensures a clear and orderly presentation of both the structure and the detailed contents of the repository.
+
+Directory/File Tree Begins -->
+
+basic/
+├── README.md
+├── assertion-checking.md
+├── common-testing-approaches.md
+├── filtering-functions.md
+├── property-creation.md
+├── testing-modes.md
+└── working-with-eth.md
+
+<-- Directory/File Tree Ends
+
+File Content Begin -->
+[File Begins] README.md
+# Basic
+
+- [How to Choose the Most Suitable Testing Mode](./testing-modes.md): Selecting the Most Appropriate Testing Mode
+- [How to Determine the Best Testing Approach](./common-testing-approaches.md): Deciding on the Optimal Testing Method
+- [How to Filter Functions](./filtering-functions.md): Filtering the Functions to be Fuzzed
+- [How to Test Assertions Effectively](./assertion-checking.md): Efficiently Testing Assertions with Echidna
+- [How to write properties that use ether](./working-with-eth.md): Fuzzing ether during fuzzing campaigns
+- [How to Write Good Properties Step by Step](./property-creation.md): Improving Property Testing through Iteration
+
+[File Ends] README.md
+
+[File Begins] assertion-checking.md
+# How to Test Assertions with Echidna
+
+**Table of contents:**
+
+- [How to Test Assertions with Echidna](#how-to-test-assertions-with-echidna)
+  - [Introduction](#introduction)
+  - [Write an Assertion](#write-an-assertion)
+  - [Run Echidna](#run-echidna)
+  - [When and How to Use Assertions](#when-and-how-to-use-assertions)
+  - [Summary: Assertion Checking](#summary-assertion-checking)
+
+## Introduction
+
+In this short tutorial, we will demonstrate how to use Echidna to check assertions in smart contracts.
+
+## Write an Assertion
+
+Let's assume we have a contract like this one:
+
+```solidity
+contract Incrementor {
+    uint256 private counter = 2 ** 200;
+
+    function inc(uint256 val) public returns (uint256) {
+        uint256 tmp = counter;
+        unchecked {
+            counter += val;
+        }
+        // tmp <= counter
+        return (counter - tmp);
+    }
+}
+```
+
+We want to ensure that `tmp` is less than or equal to `counter` after returning its difference. We could write an Echidna property, but we would need to store the `tmp` value somewhere. Instead, we can use an assertion like this one (_[assert.sol](https://github.com/crytic/building-secure-contracts/blob/master/program-analysis/echidna/example/assert.sol)_):
+
+```solidity
+contract Incrementor {
+    uint256 private counter = 2 ** 200;
+
+    function inc(uint256 val) public returns (uint256) {
+        uint256 tmp = counter;
+        unchecked {
+            counter += val;
+        }
+        assert(tmp <= counter);
+        return (counter - tmp);
+    }
+}
+```
+
+We can also use a special event called `AssertionFailed` with any number of parameters to inform Echidna about a failed assertion without using `assert`. This will work in any contract. For example:
+
+```solidity
+contract Incrementor {
+    event AssertionFailed(uint256);
+
+    uint256 private counter = 2 ** 200;
+
+    function inc(uint256 val) public returns (uint256) {
+        uint256 tmp = counter;
+        unchecked {
+            counter += val;
+        }
+        if (tmp > counter) {
+            emit AssertionFailed(counter);
+        }
+        return (counter - tmp);
+    }
+}
+```
+
+## Run Echidna
+
+To enable assertion failure testing in Echidna, you can use `--test-mode assertion` directly from the command line.
+
+Alternatively, you can create an [Echidna configuration file](https://github.com/crytic/echidna/wiki/Config), `config.yaml`, with `testMode` set for assertion checking:
+
+```yaml
+testMode: assertion
+```
+
+When we run this contract with Echidna, we receive the expected results:
+
+```
+echidna assert.sol --test-mode assertion
+Analyzing contract: assert.sol:Incrementor
+assertion in inc: failed!💥
+  Call sequence, shrinking (2596/5000):
+    inc(21711016731996786641919559689128982722488122124807605757398297001483711807488)
+    inc(7237005577332262213973186563042994240829374041602535252466099000494570602496)
+    inc(86844066927987146567678238756515930889952488499230423029593188005934847229952)
+
+Seed: 1806480648350826486
+```
+
+As you can see, Echidna reports an assertion failure in the `inc` function. It is possible to add multiple assertions per function; however, Echidna cannot determine which assertion failed.
+
+## When and How to Use Assertions
+
+Assertions can be used as alternatives to explicit properties if the conditions to check are directly related to the correct use of some operation `f`. Adding assertions after some code will enforce that the check happens immediately after it is executed:
+
+```solidity
+function f(bytes memory args) public {
+    // some complex code
+    // ...
+    assert(condition);
+    // ...
+}
+```
+
+In contrast, using an explicit Boolean property will randomly execute transactions, and there is no easy way to enforce exactly when it will be checked. It is still possible to use this workaround:
+
+```solidity
+function echidna_assert_after_f() public returns (bool) {
+    f(args);
+    return (condition);
+}
+```
+
+However, there are some issues:
+
+- It does not compile if `f` is declared as `internal` or `external`
+- It is unclear which arguments should be used to call `f`
+- The property will fail if `f` reverts
+
+Assertions can help overcome these potential issues. For instance, they can be easily detected when calling internal or public functions:
+
+```solidity
+function f(bytes memory args) public {
+    // some complex code
+    // ...
+    g(otherArgs) // this contains an assert
+    // ...
+}
+```
+
+If `g` is external, then assertion failure can be **only detected in Solidity 0.8.x or later**.
+
+```solidity
+function f(bytes memory args) public {
+    // some complex code
+    // ...
+    contract.g(otherArgs) // this contains an assert
+    // ...
+}
+```
+
+In general, we recommend following [John Regehr's advice](https://blog.regehr.org/archives/1091) on using assertions:
+
+- Do not force any side effects during the assertion checking. For instance: `assert(ChangeStateAndReturn() == 1)`
+- Do not assert obvious statements. For instance `assert(var >= 0)` where `var` is declared as `uint256`.
+
+Finally, please **do not use** `require` instead of `assert`, since Echidna will not be able to detect it (but the contract will revert anyway).
+
+## Summary: Assertion Checking
+
+The following summarizes the run of Echidna on our example (remember to use 0.7.x or older):
+
+```solidity
+contract Incrementor {
+    uint256 private counter = 2 ** 200;
+
+    function inc(uint256 val) public returns (uint256) {
+        uint256 tmp = counter;
+        counter += val;
+        assert(tmp <= counter);
+        return (counter - tmp);
+    }
+}
+```
+
+```bash
+echidna assert.sol --test-mode assertion
+Analyzing contract: assert.sol:Incrementor
+assertion in inc: failed!💥
+  Call sequence, shrinking (2596/5000):
+    inc(21711016731996786641919559689128982722488122124807605757398297001483711807488)
+    inc(7237005577332262213973186563042994240829374041602535252466099000494570602496)
+    inc(86844066927987146567678238756515930889952488499230423029593188005934847229952)
+
+Seed: 1806480648350826486
+```
+
+Echidna discovered that the assertion in `inc` can fail if this function is called multiple times with large arguments.
+
+[File Ends] assertion-checking.md
+
+[File Begins] common-testing-approaches.md
+# Common Testing Approaches
+
+Testing smart contracts is not as straightforward as testing normal binaries that you run on your local computer. This is due to the existence of multiple accounts interacting with one or many entry points. While a fuzzer can simulate the Ethereum Virtual Machine and can potentially use any account with any feature (e.g., an unlimited amount of ETH), we take care not to break some essential underlying assumptions of transactions that are impossible in Ethereum (e.g., using msg.sender as the zero address). That is why it is crucial to have a clear view of the system to test and how transactions will be simulated. We can classify the testing approach into several categories. We will start with two of them: internal and external.
+
+**Table of contents:**
+
+- [Common Testing Approaches](#common-testing-approaches)
+  - [Internal Testing](#internal-testing)
+  - [External Testing](#external-testing)
+  - [Partial Testing](#partial-testing)
+
+## Internal Testing
+
+In this testing approach, properties are defined within the contract to test, giving complete access to the internal state of the system.
+
+```solidity
+contract InternalTest is System {
+    function echidna_state_greater_than_X() public returns (bool) {
+        return stateVar > X;
+    }
+}
+```
+
+With this approach, Echidna generates transactions from a simulated account to the target contract. This testing approach is particularly useful for simpler contracts that do not require complex initialization and have a single entry point. Additionally, properties can be easier to write, as they can access the system's internal state.
+
+## External Testing
+
+In the external testing approach, properties are tested using external calls from a different contract. Properties are only allowed to access external/public variables or functions.
+
+```solidity
+contract ExternalTest {
+    constructor() public {
+        addr = address(0x1234);
+    }
+
+    function echidna_state_greater_than_X() public returns (bool) {
+        return System(addr).stateVar() > X;
+    }
+}
+```
+
+This testing approach is useful for dealing with contracts requiring external initialization (e.g., using Etheno). However, the method of how Echidna runs the transactions should be handled correctly, as the contract with the properties is no longer the one we want to test. Since `ExternalTest` defines no additional methods, running Echidna directly on this will not allow any code execution from the contract to test (no functions in `ExternalTest` to call besides the actual properties). In this case, there are several alternatives:
+
+**Contract wrapper**: Define specific operations to "wrap" the system for testing. For each operation that we want Echidna to execute in the system to test, we add one or more functions that perform an external call to it.
+
+```solidity
+contract ExternalTest {
+    constructor() public {
+       // addr = ...;
+    }
+
+    function method(...) public returns (...) {
+        return System(addr).method();
+    }
+
+    function echidna_state_greater_than_X() public returns (bool) {
+        return System(addr).stateVar() > X;
+    }
+}
+```
+
+There are two important points to consider with this approach:
+
+- The sender of each transaction will be the `ExternalTest` contract, instead of the simulated Echidna senders (e.g., `0x10000`, ..). This means that the real address interacting with the system will be the `External` contract's address, rather than one of the Echidna senders. Please take special care if this contract needs to be provided ETH or tokens.
+
+- This approach is manual and can be time-consuming if there are many function operations. However, it can be useful when Echidna needs help calculating a value that cannot be randomly sampled:
+
+```solidity
+contract ExternalTest {
+    // ...
+
+    function methodUsingF(..., uint256 x) public returns (...) {
+       return System(addr).method(.., f(x));
+    }
+
+    ...
+}
+```
+
+**allContracts**: Echidna can perform direct calls to every contract if the `allContracts` mode is enabled. This means that using it does not require wrapped calls. However, since every deployed contract can be called, unintended effects may occur. For example, if we have a property to ensure that the amount of tokens is limited:
+
+```solidity
+contract ExternalTest {
+    constructor() {
+       addr = ...;
+       MockERC20(...).mint(...);
+    }
+
+    function echidna_limited_supply() public returns (bool) {
+       return System(addr).balanceOf(...) <= X;
+    }
+
+    ...
+}
+```
+
+Using "mock" contracts for tokens (e.g., MockERC20) could be an issue because Echidna could call functions that are public but are only supposed to be used during the initialization, such as `mint`. This can be easily solved using a blacklist of functions to ignore:
+
+```yaml
+filterBlacklist: true
+filterFunctions: [“MockERC20.mint(uint256, address)”]
+```
+
+Another benefit of using this approach is that it forces the developer or auditor to write properties using public data. If an essential property cannot be defined using public data, it could indicate that users or other contracts will not be able to easily interact with the system to perform an operation or verify that the system is in a valid state.
+
+## Partial Testing
+
+Ideally, testing a smart contract system uses the complete deployed system, with the same parameters that the developers intend to use. Testing with the real code is always preferred, even if it is slower than other methods (except for cases where it is extremely slow). However, there are many cases where, despite the complete system being deployed, it cannot be simulated because it depends on off-chain components (e.g., a token bridge). In these cases, alternative solutions must be implemented.
+
+With partial testing, we test some of the components, ignoring or abstracting uninteresting parts such as standard ERC20 tokens or oracles. There are several ways to do this.
+
+**Isolated testing**: If a component is adequately abstracted from the rest of the system, testing it can be easy. This method is particularly useful for testing stateless properties found in components that compute mathematical operations, such as mathematical libraries.
+
+**Function override**: Solidity allows for function overriding, used to change the functionality of a code segment without affecting the rest of the codebase. We can use this to disable certain functions in our tests to allow testing with Echidna:
+
+```solidity
+contract InternalTestOverridingSignatures is System {
+    function verifySignature(...) public override returns (bool) {
+        return true; // signatures are always valid
+    }
+
+    function echidna_state_greater_than_X() public returns (bool) {
+        executeSomethingWithSignature(...);
+        return stateVar > X;
+    }
+}
+```
+
+**Model testing**: If the system is not modular enough, a different approach is required. Instead of using the code as is, we will create a "model" of the system in Solidity, using mostly the original code. Although there is no defined list of steps to build a model, we can provide a generic example. Suppose we have a complex system that includes this piece of code:
+
+```solidity
+contract System {
+    ...
+
+    function calculateSomething() public returns (uint256) {
+        if (booleanState) {
+            stateSomething = (uint256State1 * uint256State2) / 2 ** 128;
+            return stateSomething / uint128State;
+        }
+
+        ...
+    }
+}
+```
+
+Where `boolState`, `uint256State1`, `uint256State2`, and `stateSomething` are state variables of our system to test. We will create a model (e.g., copy, paste, and modify the original code in a new contract), where each state variable is transformed into a parameter:
+
+```solidity
+contract SystemModel {
+    function calculateSomething(bool boolState, uint256 uint256State1, ...) public returns (uint256) {
+        if (boolState) {
+            stateSomething = (uint256State1 * uint256State2) / 2 ** 128;
+            return stateSomething / uint128State;
+        }
+        ...
+    }
+}
+```
+
+At this point, we should be able to compile our model without any dependency on the original codebase (everything necessary should be included in the model). We can then insert assertions to detect when the returned value exceeds a certain threshold.
+
+While developers or auditors may be tempted to quickly create tests using this technique, there are certain disadvantages when creating models:
+
+- The tested code can be very different from what we want to test. This can either introduce unreal issues (false positives) or hide real issues from the original code (false negatives). In the example, it is unclear if the state variables can take arbitrary values.
+
+- The model will have limited value if the code changes since any modification to the original model will require manually rebuilding the model.
+
+In any case, developers should be warned that their code is difficult to test and should refactor it to avoid this issue in the future.
+
+[File Ends] common-testing-approaches.md
+
+[File Begins] filtering-functions.md
+# Filtering Functions for Fuzzing Campaigns
+
+**Table of contents:**
+
+- [Filtering Functions for Fuzzing Campaigns](#filtering-functions-for-fuzzing-campaigns)
+  - [Introduction](#introduction)
+  - [Filtering functions](#filtering-functions)
+- [Running Echidna](#running-echidna)
+  - [Summary: Filtering functions](#summary-filtering-functions)
+
+## Introduction
+
+In this tutorial, we'll demonstrate how to filter specific functions to be fuzzed using Echidna. We'll use the following smart contract _[multi.sol](https://github.com/crytic/building-secure-contracts/blob/master/program-analysis/echidna/example/multi.sol)_ as our target:
+
+```solidity
+contract C {
+    bool state1 = false;
+    bool state2 = false;
+    bool state3 = false;
+    bool state4 = false;
+
+    function f(uint256 x) public {
+        require(x == 12);
+        state1 = true;
+    }
+
+    function g(uint256 x) public {
+        require(state1);
+        require(x == 8);
+        state2 = true;
+    }
+
+    function h(uint256 x) public {
+        require(state2);
+        require(x == 42);
+        state3 = true;
+    }
+
+    function i() public {
+        require(state3);
+        state4 = true;
+    }
+
+    function reset1() public {
+        state1 = false;
+        state2 = false;
+        state3 = false;
+        return;
+    }
+
+    function reset2() public {
+        state1 = false;
+        state2 = false;
+        state3 = false;
+        return;
+    }
+
+    function echidna_state4() public returns (bool) {
+        return (!state4);
+    }
+}
+```
+
+The small contract above requires Echidna to find a specific sequence of transactions to modify a certain state variable, which is difficult for a fuzzer. It's recommended to use a symbolic execution tool like [Manticore](https://github.com/trailofbits/manticore) in such cases. Let's run Echidna to verify this:
+
+```
+echidna multi.sol
+...
+echidna_state4: passed! 🎉
+Seed: -3684648582249875403
+```
+
+## Filtering Functions
+
+Echidna has difficulty finding the correct sequence to test this contract because the two reset functions (`reset1` and `reset2`) revert all state variables to `false`. However, we can use a special Echidna feature to either blacklist the `reset` functions or whitelist only the `f`, `g`, `h`, and `i` functions.
+
+To blacklist functions, we can use the following configuration file:
+
+```yaml
+filterBlacklist: true
+filterFunctions: ["C.reset1()", "C.reset2()"]
+```
+
+Alternatively, we can whitelist specific functions by listing them in the configuration file:
+
+```yaml
+filterBlacklist: false
+filterFunctions: ["C.f(uint256)", "C.g(uint256)", "C.h(uint256)", "C.i()"]
+```
+
+- `filterBlacklist` is `true` by default.
+- Filtering will be performed based on the full function name (contract name + "." + ABI function signature). If you have `f()` and `f(uint256)`, you can specify exactly which function to filter.
+
+# Running Echidna
+
+To run Echidna with a configuration file `blacklist.yaml`:
+
+```
+echidna multi.sol --config blacklist.yaml
+...
+echidna_state4: failed!💥
+  Call sequence:
+    f(12)
+    g(8)
+    h(42)
+    i()
+```
+
+Echidna will quickly discover the sequence of transactions required to falsify the property.
+
+## Summary: Filtering Functions
+
+Echidna can either blacklist or whitelist functions to call during a fuzzing campaign using:
+
+```yaml
+filterBlacklist: true
+filterFunctions: ["C.f1()", "C.f2()", "C.f3()"]
+```
+
+```bash
+echidna contract.sol --config config.yaml
+...
+```
+
+Depending on the value of the `filterBlacklist` boolean, Echidna will start a fuzzing campaign by either blacklisting `C.f1()`, `C.f2()`, and `C.f3()` or by _only_ calling those functions.
+
+[File Ends] filtering-functions.md
+
+[File Begins] property-creation.md
+# How to Write Good Properties Step by Step
+
+**Table of contents:**
+
+- [How to Write Good Properties Step by Step](#how-to-write-good-properties-step-by-step)
+  - [Introduction](#introduction)
+  - [A First Approach](#a-first-approach)
+  - [Enhancing Postcondition Checks](#enhancing-postcondition-checks)
+  - [Combining Properties](#combining-properties)
+  - [Final Considerations](#final-considerations)
+  - [Summary: How to Write Good Properties](#summary-how-to-write-good-properties)
+
+## Introduction
+
+In this short tutorial, we will detail some ideas for writing interesting or useful properties using Echidna. At each step, we will iteratively improve our properties.
+
+## A First Approach
+
+One of the simplest properties to write using Echidna is to throw an assertion when some function is expected to revert or return.
+
+Let's suppose we have a contract interface like the one below:
+
+```solidity
+interface DeFi {
+    ERC20 t;
+
+    function getShares(address user) external returns (uint256);
+
+    function createShares(uint256 val) external returns (uint256);
+
+    function depositShares(uint256 val) external;
+
+    function withdrawShares(uint256 val) external;
+
+    function transferShares(address to) external;
+}
+```
+
+In this example, users can deposit tokens using `depositShares`, mint shares using `createShares`, withdraw shares using `withdrawShares`, transfer all shares to another user using `transferShares`, and get the number of shares for any account using `getShares`. We will start with very basic properties:
+
+```solidity
+contract Test {
+    DeFi defi;
+    ERC20 token;
+
+    constructor() {
+        defi = DeFi(...);
+        token.mint(address(this), ...);
+    }
+
+    function getShares_never_reverts() public {
+        (bool b,) = defi.call(abi.encodeWithSignature("getShares(address)", address(this)));
+        assert(b);
+    }
+
+    function depositShares_never_reverts(uint256 val) public {
+        if (token.balanceOf(address(this)) >= val) {
+            (bool b,) = defi.call(abi.encodeWithSignature("depositShares(uint256)", val));
+            assert(b);
+        }
+    }
+
+    function withdrawShares_never_reverts(uint256 val) public {
+        if (defi.getShares(address(this)) >= val) {
+            (bool b,) = defi.call(abi.encodeWithSignature("withdrawShares(uint256)", val));
+            assert(b);
+        }
+    }
+
+    function depositShares_can_revert(uint256 val) public {
+        if (token.balanceOf(address(this)) < val) {
+            (bool b,) = defi.call(abi.encodeWithSignature("depositShares(uint256)", val));
+            assert(!b);
+        }
+    }
+
+    function withdrawShares_can_revert(uint256 val) public {
+        if (defi.getShares(address(this)) < val) {
+            (bool b,) = defi.call(abi.encodeWithSignature("withdrawShares(uint256)", val));
+            assert(!b);
+        }
+    }
+}
+
+```
+
+After you have written your first version of properties, run Echidna to make sure they work as expected. During this tutorial, we will improve them step by step. It is strongly recommended to run the fuzzer at each step to increase the probability of detecting any potential issues.
+
+Perhaps you think these properties are too low level to be useful, particularly if the code has good coverage in terms of unit tests.
+But you will be surprised how often an unexpected revert or return uncovers a complex and severe issue. Moreover, we will see how these properties can be improved to cover more complex post-conditions.
+
+Before we continue, we will improve these properties using [try/catch](https://docs.soliditylang.org/en/v0.6.0/control-structures.html#try-catch). The use of a low-level call forces us to manually encode the data, which can be error-prone (an error will always cause calls to revert). Note, this will only work if the codebase is using solc 0.6.0 or later:
+
+```solidity
+function depositShares_never_reverts(uint256 val) public {
+    if (token.balanceOf(address(this)) >= val) {
+        try defi.depositShares(val) {
+            /* not reverted */
+        } catch {
+            assert(false);
+        }
+    }
+}
+
+function depositShares_can_revert(uint256 val) public {
+    if (token.balanceOf(address(this)) < val) {
+        try defi.depositShares(val) {
+            assert(false);
+        } catch {
+            /* reverted */
+        }
+    }
+}
+```
+
+## Enhancing Postcondition Checks
+
+If the previous properties are passing, this means that the pre-conditions are good enough, however the post-conditions are not very precise.
+Avoiding reverts doesn't mean that the contract is in a valid state. Let's add some basic preconditions:
+
+```solidity
+function depositShares_never_reverts(uint256 val) public {
+    if (token.balanceOf(address(this)) >= val) {
+        try defi.depositShares(val) {
+            /* not reverted */
+        } catch {
+            assert(false);
+        }
+        assert(defi.getShares(address(this)) > 0);
+    }
+}
+
+function withdrawShares_never_reverts(uint256 val) public {
+    if (defi.getShares(address(this)) >= val) {
+        try defi.withdrawShares(val) {
+            /* not reverted */
+        } catch {
+            assert(false);
+        }
+        assert(token.balanceOf(address(this)) > 0);
+    }
+}
+```
+
+Hmm, it looks like it is not that easy to specify the value of shares or tokens obtained after each deposit or withdrawal. At least we can say that we must receive something, right?
+
+## Combining Properties
+
+In this generic example, it is unclear if there is a way to calculate how many shares or tokens we should receive after executing the deposit or withdraw operations. Of course, if we have that information, we should use it. In any case, what we can do here is to combine these two properties into a single one to be able check more precisely its preconditions.
+
+```solidity
+function deposit_withdraw_shares_never_reverts(uint256 val) public {
+    uint256 original_balance = token.balanceOf(address(this));
+    if (original_balance >= val) {
+        try defi.depositShares(val) {
+            /* not reverted */
+        } catch {
+            assert(false);
+        }
+        uint256 shares = defi.getShares(address(this));
+        assert(shares > 0);
+        try defi.withdrawShares(shares) {
+            /* not reverted */
+        } catch {
+            assert(false);
+        }
+        assert(token.balanceOf(address(this)) == original_balance);
+    }
+}
+```
+
+The resulting property checks that calls to deposit or withdraw shares will never revert and once they execute, the original number of tokens remains the same. Keep in mind that this property should consider fees and any tolerated loss of precision (e.g. when the computation requires a division).
+
+## Final Considerations
+
+Two important considerations for this example:
+
+We want Echidna to spend most of the execution exploring the contract to test. So, in order to make the properties more efficient, we should avoid dead branches where there is nothing to do. That's why we can improve `depositShares_never_reverts` to use:
+
+```solidity
+function depositShares_never_reverts(uint256 val) public {
+    if (token.balanceOf(address(this)) > 0) {
+        val = val % (token.balanceOf(address(this)) + 1);
+        try defi.depositShares(val) { /* not reverted */ }
+        catch {
+            assert(false);
+        }
+        assert(defi.getShares(address(this)) > 0);
+    } else {
+        ... // code to test depositing zero tokens
+    }
+}
+```
+
+Additionally, combining properties does not mean that we will have to remove simpler ones. For instance, if we want to write `withdraw_deposit_shares_never_reverts`, in which we reverse the order of operations (withdraw and then deposit, instead of deposit and then withdraw), we will have to make sure `defi.getShares(address(this))` can be positive. An easy way to do it is to keep `depositShares_never_reverts`, since this code allows Echidna to deposit tokens from `address(this)` (otherwise, this is impossible).
+
+## Summary: How to Write Good Properties
+
+It is usually a good idea to start writing simple properties first and then improving them to make them more precise and easier to read. At each step, you should run a short fuzzing campaign to make sure they work as expected and try to catch issues early during the development of your smart contracts.
+
+[File Ends] property-creation.md
+
+[File Begins] testing-modes.md
+# How to Select the Most Suitable Testing Mode
+
+Echidna offers several ways to write properties, which often leaves developers and auditors wondering about the most appropriate testing mode to use. In this section, we will review how each mode works, as well as their advantages and disadvantages.
+
+**Table of Contents:**
+
+- [Boolean Properties](#boolean-properties)
+- [Assertions](#assertions)
+- [Dapptest](#dapptest)
+- [Stateless vs. Stateful](#stateless-vs-stateful)
+
+## Boolean Properties
+
+By default, the "property" testing mode is used, which reports failures using special functions called properties:
+
+- Testing functions should be named with a specific prefix (e.g. `echidna_`).
+- Testing functions take no parameters and always return a boolean value.
+- Any side effect will be reverted at the end of the execution of the property.
+- Properties pass if they return true and fail if they return false or revert. Alternatively, properties that start with "echidna*revert*" will fail if they return any value (true or false) and pass if they revert. This pseudo-code summarizes how properties work:
+
+```solidity
+function echidna_property() public returns (bool) { // No arguments are required
+  // The following statements can trigger a failure if they revert
+  publicFunction(...);
+  internalFunction(...);
+  contract.function(...);
+
+  // The following statement can trigger a failure depending on the returned value
+  return ...;
+} // side effects are *not* preserved
+
+function echidna_revert_property() public returns (bool) { // No arguments are required
+  // The following statements can *never* trigger a failure
+  publicFunction(...);
+  internalFunction(...);
+  contract.function(...);
+
+  // The following statement will *always* trigger a failure regardless of the value returned
+  return ...;
+} // side effects are *not* preserved
+```
+
+### Advantages:
+
+- Properties can be easier to write and understand compared to other approaches for testing.
+- No need to worry about side effects since these are reverted at the end of the property execution.
+
+### Disadvantages:
+
+- Since the properties take no parameters, any additional input should be added using a state variable.
+- Any revert will be interpreted as a failure, which is not always expected.
+- No coverage is collected during its execution so these properties should be used with simple code. For anything complex (e.g., with a non-trivial amount of branches), other types of tests should be used.
+
+### Recommendations
+
+This mode can be used when a property can be easily computed from the use of state variables (either internal or public), and there is no need to use extra parameters.
+
+## Assertions
+
+Using the "assertion" testing mode, Echidna will report an assert violation if:
+
+- The execution reverts during a call to `assert`. Technically speaking, Echidna will detect an assertion failure if it executes an `assert` call that fails in the first call frame of the target contract (so this excludes most internal transactions).
+- An `AssertionFailed` event (with any number of parameters) is emitted by any contract. This pseudo-code summarizes how assertions work:
+
+```solidity
+function checkInvariant(...) public { // Any number of arguments is supported
+  // The following statements can trigger a failure using `assert`
+  assert(...);
+  publicFunction(...);
+  internalFunction(...);
+
+  // The following statement will always trigger a failure even if the execution ends with a revert
+  emits AssertionFailed(...);
+
+  // The following statement will *only* trigger a failure using `assert` if using solc 0.8.x or newer
+  // To make sure it works in older versions, use the AssertionFailed(...) event
+  anotherContract.function(...);
+
+} // side effects are preserved
+```
+
+Functions checking assertions do not require any particular name and are executed like any other function; therefore, their side effects are retained if they do not revert.
+
+### Advantages
+
+- Easy to implement, especially if several parameters are required to compute the invariant.
+- Coverage is collected during the execution of these tests, so it can help to discover new failures.
+- If the code base already contains assertions for checking invariants, they can be reused.
+
+### Disadvantages
+
+- If the code to test is already using assertions for data validation, it will not work as expected. For example:
+
+```solidity
+function deposit(uint256 tokens) public {
+  assert(tokens > 0); // should be strictly positive
+  ...
+}
+```
+
+Developers _should_ avoid doing that and use `require` instead, but if that is not possible because you are calling some contract that is outside your control, you can use the `AssertionFailure` event.
+
+### Recommendation
+
+You should use assertions if your invariant is more naturally expressed using arguments or can only be checked in the middle of a transaction. Another good use case of assertions is complex code that requires checking something as well as changing the state. In the following example, we test staking some ERC20, given that there are at least `MINSTAKE` tokens in the sender balance.
+
+```solidity
+function testStake(uint256 toStake) public {
+    uint256 balance = balanceOf(msg.sender);
+    toStake = toStake % (balance + 1);
+    if (toStake < MINSTAKE) return; // Pre: minimal stake is required
+    stake(msg.sender, toStake); // Action: token staking
+    assert(staked(msg.sender) == toStake); // Post: staking amount is toStake
+    assert(balanceOf(msg.sender) == balance - toStake); // Post: balance decreased
+}
+```
+
+`testStake` checks some invariants on staking and also ensures that the contract's state is updated properly (e.g., allowing a user to stake at least `MINSTAKE`).
+
+## Dapptest
+
+Using the "dapptest" testing mode, Echidna will report violations using certain functions following how dapptool and foundry work:
+
+- This mode uses any function name with one or more arguments, which will trigger a failure if they revert, except in one special case. Specifically, if the execution reverts with the special reason “FOUNDRY::ASSUME”, then the test will pass (this emulates how [the `assume` foundry cheat code works](https://github.com/gakonst/foundry/commit/7dcce93a38345f261d92297abf11fafd6a9e7a35#diff-47207bb2f6cf3c4ac054647e851a98a57286fb9bb37321200f91637262d3eabfR90-R96)). This pseudo-code summarizes how dapptests work:
+
+```solidity
+function checkDappTest(..) public { // One or more arguments are required
+  // The following statements can trigger a failure if they revert
+  publicFunction(..);
+  internalFunction(..);
+  anotherContract.function(..);
+
+  // The following statement will never trigger a failure
+  require(.., “FOUNDRY::ASSUME”);
+}
+```
+
+- Functions implementing these tests do not require any particular name and are executed like any other function; therefore, their side effects are retained if they do not revert (typically, this mode is used only in stateless testing).
+- The function should NOT be payable (but this can change in the future)
+
+### Advantages:
+
+- Easy to implement, particularly for stateless mode.
+- Coverage is collected during the execution of these tests, so it can help to discover new failures.
+
+### Disadvantages:
+
+- Almost any revert will be interpreted as a failure, which is not always expected. To avoid this, you should use reverts with `FOUNDRY::ASSUME` or use try/catch.
+
+### Recommendation
+
+Use dapptest mode if you are testing stateless invariants and the code will never unexpectedly revert. Avoid using it for stateful testing, as it was not designed for that (although Echidna supports it).
+
+## Stateless vs. Stateful
+
+Any of these testing modes can be used, in either stateful (by default) or stateless mode (using `--seqLen 1`). In stateful mode, Echidna will maintain the state between each function call and attempt to break the invariants. In stateless mode, Echidna will discard state changes during fuzzing. There are notable differences between these two modes.
+
+- Stateful is more powerful and can allow breaking invariants that exist only if the contract reaches a specific state.
+- Stateless tests benefit from simpler input generation and are generally easier to use than stateful tests.
+- Stateless tests can hide issues since some of them depend on a sequence of operations that is not reachable in a single transaction.
+- Stateless mode forces resetting the EVM after each transaction or test, which is usually slower than resetting the state once every certain amount of transactions (by default, every 100 transactions).
+
+### Recommendations
+
+For beginners, we recommend starting with Echidna in stateless mode and switching to stateful once you have a good understanding of the system's invariants.
+
+[File Ends] testing-modes.md
+
+[File Begins] working-with-eth.md
+# Using ether during a fuzzing campaign
+
+**Table of contents:**
+
+- [Using ether during a fuzzing campaign](#using-ether-during-a-fuzzing-campaign)
+  - [Introduction](#introduction)
+  - [Controlling the amount of ether in payable functions](#controlling-the-amount-of-ether-in-payable-functions)
+  - [Controlling the amount of ether in contracts](#controlling-the-amount-of-ether-in-contracts)
+  - [Summary: Working with ether](#summary-working-with-ether)
+
+## Introduction
+
+We will see how to use ether during a fuzzing campaign. The following smart contract will be used as example:
+
+```solidity
+contract C {
+    function pay() public payable {
+        require(msg.value == 12000);
+    }
+
+    function echidna_has_some_value() public returns (bool) {
+        return (address(this).balance != 12000);
+    }
+}
+```
+
+This code forces Echidna to send a particular amount of ether as value in the `pay` function.
+Echidna will do this for each payable function in the target function (or any contract if `allContracts` is enabled):
+
+```
+$ echidna balanceSender.sol
+...
+echidna_has_some_value: failed!💥
+  Call sequence:
+    pay() Value: 0x2ee0
+```
+
+Echidna will show the value amount in hexadecimal.
+
+## Controlling the amount of ether in payable functions
+
+The amount of ether to send in each payable function will be randomly selected, but with a maximum value determined by the `maxValue` value
+with a default of 100 ether per transaction:
+
+```yaml
+maxValue: 100000000000000000000
+```
+
+This means that each transaction will contain, at most, 100 ether in value. However, there is no maximum that will be used in total.
+The maximum amount to receive will be determined by the number of transactions. If you are using 100 transactions (`--seq-len 100`),
+then the total amount of ether used for all the transactions will be between 0 and 100 \* 100 ethers.
+
+Keep in mind that the balance of the senders (e.g. `msg.sender.balance`) is a fixed value that will NOT change between transactions.
+This value is determined by the following config option:
+
+```yaml
+balanceAddr: 0xffffffff
+```
+
+## Controlling the amount of ether in contracts
+
+Another approach to handle ether will be allow the testing contract to receive certain amount and then use it to send it.
+
+```solidity
+contract A {
+    C internal c;
+
+    constructor() public payable {
+        require(msg.value == 12000);
+        c = new C();
+    }
+
+    function payToContract(uint256 toPay) public {
+        toPay = toPay % (address(this).balance + 1);
+        c.pay{ value: toPay }();
+    }
+
+    function echidna_C_has_some_value() public returns (bool) {
+        return (address(c).balance != 12000);
+    }
+}
+
+contract C {
+    function pay() public payable {
+        require(msg.value == 12000);
+    }
+}
+```
+
+However, if we run this directly with echidna, it will fail:
+
+```
+$ echidna balanceContract.sol
+...
+echidna: Deploying the contract 0x00a329c0648769A73afAc7F9381E08FB43dBEA72 failed (revert, out-of-gas, sending ether to an non-payable constructor, etc.):
+```
+
+We need to define the amount to send during the contract creation:
+
+```yaml
+balanceContract: 12000
+```
+
+We can re-run echidna, using that config file, to obtain the expected result:
+
+```
+$ echidna balanceContract.sol --config balanceContract.yaml
+...
+echidna_C_has_some_value: failed!💥
+  Call sequence:
+    payToContract(12000)
+```
+
+## Summary: Working with ether
+
+Echidna has two options for using ether during a fuzzing campaign.
+
+- `maxValue` to set the max amount of ether per transaction
+- `contractBalance` to set the initial amount of ether that the testing contract receives in the constructor.
+
+[File Ends] working-with-eth.md
+
+
+<-- File Content Ends
+
