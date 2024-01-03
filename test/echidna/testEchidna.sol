@@ -15,7 +15,7 @@ import { SantaToken } from "../../src/SantaToken.sol";
 
 contract EchidnaTest {
   SantasList santasList;
-  SantaToken santaToken;
+  SantaToken santaToken; //
 
   constructor() {
     santasList = new SantasList();
